@@ -2,14 +2,14 @@
 
 tmux copy mode for [Rex](https://www.superlogical.com/rex) panes.
 
+This is a stopgap until Rex has its own copy mode. The Rex team has accepted the feature request on the beta Discord.
+
 Press `Ctrl-A [` and the focused pane's scrollback opens in tmux copy mode, in a floating pane over the original. Select text with the vi keys you'd use in tmux. `y` copies it to the clipboard and closes copy mode.
 
 ## Requirements
 
 - Rex with Lua config (tested with Rex for Mac 0.1.0)
-- tmux 3.0 or newer
-- jq
-- `pbcopy`, `wl-copy`, `xclip` or `xsel`
+- tmux 3.2 or newer
 
 ## Install
 
@@ -31,6 +31,16 @@ require("tmux-copy").setup({ key = "ctrl+b>[" })
 
 With `key = false`, nothing is bound and you can bind the `tmux_copy_mode` action yourself.
 
+Copied text goes to `pbcopy`. To use another command, such as on a Linux server, pass it as a list:
+
+```lua
+require("tmux-copy").setup({ clipboard = { "wl-copy" } })
+```
+
+## Customize
+
+Copy mode reads `~/.config/rex/tmux-copy.conf` after its own `tmux.conf`, if the file exists. Put your own tmux settings and `copy-mode-vi` bindings there, or `set -g mode-keys emacs` to use the emacs keys.
+
 ## Keys
 
 Copy mode uses tmux's `copy-mode-vi` table, so `hjkl`, `w`, `b`, `/`, `?`, `n`, `gg` and `G` work as usual. The selection keys are:
@@ -42,16 +52,19 @@ Copy mode uses tmux's `copy-mode-vi` table, so `hjkl`, `w`, `b`, `/`, `?`, `n`, 
 | `Ctrl-V`, `r` | Rectangle selection |
 | `y`, `Enter` | Copy and close |
 | `q` | Close without copying |
+| `Esc` | Clear the selection, or close if there is none |
 
 ## How it works
 
-The action captures the pane with `rex capture` and opens a floating pane at the same position. The floating pane replays the capture into a tmux server on a private socket and enters copy mode once the replay ends. When you leave copy mode, the script copies the yanked text, closes the floating pane and focuses the original pane. Your own tmux sessions are not touched.
+The action opens a floating pane at the same position as the focused pane. The floating pane captures the original with `rex capture`, replays the capture into a tmux server on a private socket and enters copy mode once the replay ends. When you leave copy mode, the script copies the yanked text, focuses the original pane and exits, which closes the floating pane. Your own tmux sessions are not touched.
 
 ## Limitations
 
 - Copy mode shows a snapshot. Output that arrives after you open it doesn't appear.
 - It opens at the bottom of the scrollback, not where the pane is scrolled to.
+- Full-screen programs such as vim and lazygit have no scrollback, so copy mode shows only their current screen.
 - On very large scrollbacks the replay takes up to a second.
+- tmux and Rex disagree on the width of some emoji, so lines with emoji can be drawn a cell or two off. The copied text is unaffected.
 
 ## License
 
