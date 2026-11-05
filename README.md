@@ -8,7 +8,7 @@ Press `Ctrl-A [` and the focused pane's scrollback opens in tmux copy mode, in a
 
 ## Requirements
 
-- Rex with Lua config (tested with Rex for Mac 0.1.0)
+- Rex with a Lua config (tested on the Rex for Mac beta, November 2026)
 - tmux 3.2 or newer
 
 ## Install
@@ -31,7 +31,7 @@ require("tmux-copy").setup({ key = "ctrl+b>[" })
 
 With `key = false`, nothing is bound and you can bind the `tmux_copy_mode` action yourself.
 
-Copied text goes to `pbcopy`. To use another command, such as on a Linux server, pass it as a list:
+Copied text goes to `pbcopy`. To use another command, such as on Linux, pass it as a list:
 
 ```lua
 require("tmux-copy").setup({ clipboard = { "wl-copy" } })
@@ -39,11 +39,15 @@ require("tmux-copy").setup({ clipboard = { "wl-copy" } })
 
 ## Customize
 
-Copy mode reads `~/.config/rex/tmux-copy.conf` after its own `tmux.conf`, if the file exists. Put your own tmux settings and `copy-mode-vi` bindings there, or `set -g mode-keys emacs` to use the emacs keys.
+Copy mode reads `~/.config/rex/tmux-copy.conf` after its own `tmux.conf`, if the file exists. Put your own tmux settings and `copy-mode-vi` bindings there. A binding copies to the clipboard only if it sets `@yank`, as `y` does:
+
+```tmux
+bind -T copy-mode-vi Y { set -g @yank 1 ; send -X copy-line-and-cancel }
+```
 
 ## Keys
 
-Copy mode uses tmux's `copy-mode-vi` table, so `hjkl`, `w`, `b`, `/`, `?`, `n`, `gg` and `G` work as usual. The selection keys are:
+Copy mode uses tmux's `copy-mode-vi` table, so `hjkl`, `w`, `b`, `/`, `?`, `n`, `g` and `G` work as usual. The selection keys are:
 
 | Key | Action |
 | --- | --- |
