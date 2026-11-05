@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# tmux copy mode over a Rex pane's scrollback, in a floating pane.
+#
+#   rex-tmux-copy open SESSION BLOCK   capture BLOCK and open copy mode over it
+#   rex-tmux-copy ui DIR BLOCK         run copy mode over a capture (inside the float)
+set -euo pipefail
+
+# Rex runs actions with a minimal PATH. Add Homebrew and the Mac app's CLI.
+REX_MAC_BIN="$HOME/Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS"
+export PATH="${REX_BIN_DIR:+$REX_BIN_DIR:}$PATH:/opt/homebrew/bin:/usr/local/bin:$REX_MAC_BIN"
+
+SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+CONF="$(dirname "$SELF")/tmux.conf"
+
+clipboard() {
+	if command -v pbcopy >/dev/null; then
+		pbcopy
+	elif command -v wl-copy >/dev/null; then
+		wl-copy
+	elif command -v xclip >/dev/null; then
+		xclip -selection clipboard
+	elif command -v xsel >/dev/null; then
+		xsel --clipboard --input
+	else
+		echo "rex-tmux-copy: no clipboard command found" >&2
+		return 1
+	fi
+}
+
+# Stop tmux, copy any yank, focus the source pane, then close this float's
+# layer. If the float closes on its own, Rex focuses a neighbouring pane.
+finish() {
+	local src="$1" dir="$2" layer
+	tmux -S "$dir/s" kill-server >/dev/null 2>&1 || true
+	if [[ -s "$dir/s.out" ]]; then
+		clipboard <"$dir/s.out" || true
+	fi
+	rm -rf "$dir"
+	rex focus "$src" >/dev/null 2>&1 || true
+	layer=$(rex api call -s "$REX_SESSION" session.view '{}' | jq -r --arg b "$REX_BLOCK" '
+		.windows[].layers[] | select(.kind != "tiled")
+		| select([.. | .block_id? // empty] | index($b)) | .layer_id' | head -n 1)
+	[[ -n "$layer" ]] || return 0
+	jq -n --arg l "$layer" '{layer_id: $l}' |
+		rex api call -s "$REX_SESSION" session.close_layer - >/dev/null 2>&1 || true
+}
+
+ui() {
+	local dir="$1" block="$2" cap
+	trap 'finish "$block" "$dir"' EXIT
+	trap 'exit 1' HUP INT TERM
+	cap=$(printf '%q' "$dir/cap.vt")
+	# Replay the capture, then set the pane title that tmux.conf waits for
+	tmux -S "$dir/s" -f "$CONF" new-session -s copy \
+		"cat $cap; rm -f $cap; printf '\\033]2;rex-tmux-copy-ready\\033\\\\'; exec sleep 2147483647"
+}
+
+open() {
+	local session="$1" block="$2" dir place
+	# Keep the path short: the tmux socket must fit in 104 bytes on macOS
+	dir=$(mktemp -d /tmp/rex-tmux-copy.XXXXXX)
+	trap 'rm -rf "$dir"' ERR
+	# Keep the final newline. A float draws its terminal one row lower than a
+	# tiled pane of the same size and hides its bottom row, so the replay ends
+	# one row up to line up with the pane underneath.
+	rex capture -b "$block" --format vt --unwrap >"$dir/cap.vt"
+
+	# Cover the source pane, or the whole window if the pane is zoomed
+	place=$(rex api call -s "$session" session.view '{}' | jq -c --arg b "$block" '
+		[.windows[] | . as $w | .layers[]
+			| [.. | objects | select(.block_id? == $b and .rect? != null) | .rect] | first
+			| select(. != null)
+			| {window_id: $w.window_id,
+				bounds: (if $w.zoomed_block_id == $b then [0, 0, 1, 1] else . end)}]
+		| first // error("block not found in session view")')
+
+	jq -n --arg s "$session" --arg self "$SELF" --arg d "$dir" --arg b "$block" --argjson p "$place" '{
+		session_id: $s,
+		window_id: $p.window_id,
+		bounds: $p.bounds,
+		focus: true,
+		layout: {block: {
+			flavor: "com.superlogical.terminal.shell",
+			label: "copy mode",
+			options: {shell: "none", command: [$self, "ui", $d, $b]}
+		}}
+	}' | rex api call -s "$session" session.new_layer - >/dev/null
+}
+
+cmd="${1:-}"
+shift || true
+case "$cmd" in
+open) open "$@" ;;
+ui) ui "$@" ;;
+*)
+	sed -n '2,5p' "$0" >&2
+	exit 2
+	;;
+esac
