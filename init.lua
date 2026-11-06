@@ -1,7 +1,11 @@
 -- tmux copy mode for Rex panes. See README.md.
 local M = {}
 
-local script = debug.getinfo(1, "S").source:gsub("^@", ""):match("^(.*/)") .. "rex-tmux-copy"
+-- Read the script once and run it with bash -c, so copy mode also works in
+-- panes on remote hosts that don't have this repo
+local f = assert(io.open(debug.getinfo(1, "S").source:gsub("^@", ""):match("^(.*/)") .. "rex-tmux-copy"))
+local script = f:read("*a")
+f:close()
 
 -- Find a block's rect in a layer's layout tree
 local function rect(node, id)
@@ -53,7 +57,7 @@ function M.setup(opts)
                 options = {
                   shell = "none",
                   size = size and { columns = size.columns, rows = size.rows } or nil,
-                  command = { script, ctx.block_id, zoomed and "zoomed" or "-", unpack(opts.clipboard or {}) },
+                  command = { "bash", "-c", script, "rex-tmux-copy", ctx.block_id, zoomed and "zoomed" or "-" },
                 },
               }),
             })

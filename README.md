@@ -9,7 +9,9 @@ Press `Ctrl-A [` and the focused pane's scrollback opens in tmux copy mode, in a
 ## Requirements
 
 - Rex with a Lua config (tested on the Rex for Mac beta, November 2026)
-- tmux 3.2 or newer
+- tmux 3.2 or newer, on each machine whose panes you copy from
+
+Panes on remote hosts work too. The remote host needs tmux but not this repo.
 
 ## Install
 
@@ -17,7 +19,7 @@ Press `Ctrl-A [` and the focused pane's scrollback opens in tmux copy mode, in a
 git clone https://github.com/tomarrell/rex-tmux-copy ~/.config/rex/tmux-copy
 ```
 
-Add this line to `~/.config/rex/init.lua`, then run `rex config reload`:
+Add this line to `~/.config/rex/init.lua`, then run `rex config reload`. Reload again after you update the repo.
 
 ```lua
 require("tmux-copy").setup()
@@ -31,15 +33,9 @@ require("tmux-copy").setup({ key = "ctrl+b>[" })
 
 With `key = false`, nothing is bound and you can bind the `tmux_copy_mode` action yourself.
 
-Copied text goes to `pbcopy`. To use another command, such as on Linux, pass it as a list:
-
-```lua
-require("tmux-copy").setup({ clipboard = { "wl-copy" } })
-```
-
 ## Customize
 
-Copy mode reads `~/.config/rex/tmux-copy.conf` after its own `tmux.conf`, if the file exists. Put your own tmux settings and `copy-mode-vi` bindings there. A binding copies to the clipboard only if it sets `@yank`, as `y` does:
+Copy mode reads `~/.config/rex/tmux-copy.conf` on the machine the pane runs on, after its own settings, if the file exists. Put your own tmux settings and `copy-mode-vi` bindings there. A binding copies to the clipboard only if it sets `@yank`, as `y` does:
 
 ```tmux
 bind -T copy-mode-vi Y { set -g @yank 1 ; send -X copy-line-and-cancel }
@@ -60,7 +56,7 @@ Copy mode uses tmux's `copy-mode-vi` table, so `hjkl`, `w`, `b`, `/`, `?`, `n`, 
 
 ## How it works
 
-The action opens a floating pane at the same position as the focused pane. The floating pane captures the original with `rex capture`, replays the capture into a tmux server on a private socket and enters copy mode once the replay ends. When you leave copy mode, the script copies the yanked text, focuses the original pane and exits, which closes the floating pane. Your own tmux sessions are not touched.
+The action opens a floating pane at the same position as the focused pane. The floating pane captures the original with `rex capture`, replays the capture into a tmux server on a private socket and enters copy mode once the replay ends. When you leave copy mode, the script sends the yanked text to the clipboard with OSC 52, focuses the original pane and exits, which closes the floating pane. Your own tmux sessions are not touched.
 
 ## Limitations
 

@@ -2,17 +2,15 @@
 # tmux copy mode over a Rex pane's scrollback. init.lua runs this in a
 # floating pane over BLOCK:
 #
-#   rex-tmux-copy BLOCK zoomed|- [CLIPBOARD-COMMAND...]
+#   rex-tmux-copy BLOCK zoomed|-
 set -euo pipefail
 
 # Rex terminals get a minimal PATH. Add Homebrew's.
 PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
-type rex tmux >/dev/null
+type rex tmux base64 >/dev/null
 
-src=${1:?usage: rex-tmux-copy BLOCK zoomed|- [CLIPBOARD-COMMAND...]}
+src=${1:?usage: rex-tmux-copy BLOCK zoomed|-}
 zoom=${2:--}
-shift 2
-clip=("${@:-pbcopy}")
 # Keep the path short: the tmux socket must fit in 104 bytes on macOS
 dir=$(mktemp -d /tmp/rex-tmux-copy.XXXXXX)
 
@@ -22,8 +20,10 @@ dir=$(mktemp -d /tmp/rex-tmux-copy.XXXXXX)
 finish() {
 	local status=$?
 	tmux -S "$dir/s" kill-server 2>/dev/null || true
+	# Copy with OSC 52, which Rex sends to the clipboard of the machine
+	# you're on, also when the pane runs on a remote host
 	if [[ -s $dir/s.out ]]; then
-		"${clip[@]}" <"$dir/s.out" || status=$?
+		printf '\033]52;c;%s\a' "$(base64 <"$dir/s.out" | tr -d '\n')"
 	fi
 	rm -rf "$dir"
 	if ((status)); then
@@ -37,12 +37,62 @@ finish() {
 trap finish EXIT
 trap 'exit 129' HUP INT TERM
 
+cat >"$dir/tmux.conf" <<'EOF'
+set -g history-limit 250000
+set -g status off
+set -g escape-time 0
+set -g mode-keys vi
+set -g mouse on
+set -g set-clipboard off
+set -g exit-unattached on
+set -as terminal-features ',*:RGB'
+set -g prefix None
+
+bind -T copy-mode-vi v send -X begin-selection
+bind -T copy-mode-vi C-v if -F '#{selection_present}' \
+	'send -X rectangle-toggle' 'send -X begin-selection ; send -X rectangle-on'
+bind -T copy-mode-vi r send -X rectangle-toggle
+bind -T copy-mode-vi MouseDragEnd1Pane send -X copy-selection-no-clear
+bind -T copy-mode-vi Escape if -F '#{selection_present}' \
+	'send -X clear-selection' 'send -X cancel'
+
+# Only y and Enter copy to the clipboard. They set @yank before leaving.
+bind -T copy-mode-vi y { set -g @yank 1 ; send -X copy-selection-and-cancel }
+bind -T copy-mode-vi Enter { set -g @yank 1 ; send -X copy-selection-and-cancel }
+
+# Enter copy mode once the replay has finished. The cursor starts on the last
+# captured line, one row above the float's hidden bottom row.
+set-hook -g pane-title-changed {
+	if -F '#{==:#{pane_title},rex-tmux-copy-ready}' {
+		copy-mode
+		send -X cursor-up
+		set-hook -gu pane-title-changed
+	}
+}
+
+# On leaving copy mode, save the yank next to the socket if y or Enter was
+# pressed, then stop the server. Both run in one shell so the kill can't cut
+# off the save.
+set-hook -g pane-mode-changed {
+	if -F '#{pane_in_mode}' {} {
+		if -F '#{@yank}' {
+			run-shell "tmux -S '#{socket_path}' save-buffer '#{socket_path}.out' 2>/dev/null; tmux -S '#{socket_path}' kill-server"
+		} {
+			kill-server
+		}
+	}
+}
+
+# Your own copy-mode settings and bindings
+source-file -q ~/.config/rex/tmux-copy.conf
+EOF
+
 # Keep the final newline. A float draws its terminal one row lower than a
 # tiled pane of the same size and hides its bottom row, so the replay ends
 # one row up to line up with the pane underneath.
 rex capture -b "$src" --format vt --unwrap >"$dir/cap.vt"
-# Replay the capture, then set the pane title that tmux.conf waits for. The
-# client exits non-zero when tmux.conf kills the server.
-tmux -S "$dir/s" -f "$(dirname "$0")/tmux.conf" new-session -s copy sh -c \
+# Replay the capture, then set the pane title that the config waits for. The
+# client exits non-zero when the config kills the server.
+tmux -S "$dir/s" -f "$dir/tmux.conf" new-session -s copy sh -c \
 	'cat "$1"; printf "\033]2;rex-tmux-copy-ready\033\\"; exec sleep 2147483647' sh "$dir/cap.vt" ||
 	true
